@@ -12,12 +12,12 @@ venv/
 .vscode/
 
 # Data files
-data/raw/
+#data/raw/
 data/processed/
 
 # Models
-models/*.pt
-models/*.pkl
+#models/*.pt
+#models/*.pkl
 
 # Logs
 logs/
