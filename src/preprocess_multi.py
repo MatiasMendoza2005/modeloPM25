@@ -12,15 +12,33 @@ HORIZONS = {
 }
 
 # --------------------------------------
-# 1. FEATURES AVANZADOS
+# 1. EXTRA FEATURES NECESARIOS (FECHAS + VIENTO)
+# --------------------------------------
+def add_basic_engineered_features(df):
+
+    # --- FECHAS ---
+    df["hour"] = df["time"].dt.hour
+    df["day_of_week"] = df["time"].dt.dayofweek
+    df["month"] = df["time"].dt.month
+    df["is_weekend"] = df["day_of_week"].isin([5,6]).astype(int)
+
+    # --- COMPONENTES U/V DEL VIENTO ---
+    df["wind_u"] = df["wind_speed_10m"] * np.cos(np.radians(df["wind_direction_10m"]))
+    df["wind_v"] = df["wind_speed_10m"] * np.sin(np.radians(df["wind_direction_10m"]))
+
+    # --- LLUVIA ---
+    df["is_rainy"] = (df["precipitation"] > 0).astype(int)
+
+    return df
+
+
+# --------------------------------------
+# 2. FEATURES AVANZADOS (lags, MA, vorticidad…)
 # --------------------------------------
 def add_advanced_features(df):
-
-    # --- LAGS ---
-    for lag in [1,3,6,12,24]:
+    for lag in [1, 3, 6, 12, 24]:
         df[f"pm2_5_lag_{lag}"] = df["pm2_5"].shift(lag)
 
-    # --- MEDIA MÓVIL ---
     df["pm2_5_ma_3"] = df["pm2_5"].rolling(3).mean()
     df["pm2_5_ma_6"] = df["pm2_5"].rolling(6).mean()
     df["pm2_5_ma_12"] = df["pm2_5"].rolling(12).mean()
@@ -28,17 +46,13 @@ def add_advanced_features(df):
     df["wind_speed_ma_6"] = df["wind_speed_10m"].rolling(6).mean()
     df["temperature_ma_6"] = df["temperature_2m"].rolling(6).mean()
 
-    # --- VORTICIDAD ---
     df["vorticity"] = df["wind_speed_10m"] * df["surface_pressure"]
 
-    # --- SECTORES DE VIENTO ---
-    bins = [0, 45, 90, 135, 180, 225, 270, 315, 360]
+    bins = [0,45,90,135,180,225,270,315,360]
     labels = ["N","NE","E","SE","S","SW","W","NW"]
-    df["wind_sector"] = pd.cut(df["wind_direction_10m"],
-                               bins=bins, labels=labels, include_lowest=True)
+    df["wind_sector"] = pd.cut(df["wind_direction_10m"], bins=bins, labels=labels, include_lowest=True)
     df = pd.get_dummies(df, columns=["wind_sector"], prefix="wind")
 
-    # --- ESTACIONALIDAD ---
     df["day_of_year"] = df["time"].dt.dayofyear
     df["season"] = (df["time"].dt.month % 12 + 4) // 3
 
@@ -46,7 +60,7 @@ def add_advanced_features(df):
 
 
 # --------------------------------------
-# 2. MULTI-HORIZON TARGETS
+# 3. TARGETS MULTI-HORIZON
 # --------------------------------------
 def add_multi_horizon_targets(df):
     for name, steps in HORIZONS.items():
@@ -55,7 +69,7 @@ def add_multi_horizon_targets(df):
 
 
 # --------------------------------------
-# 3. PIPELINE COMPLETO
+# 4. PIPELINE COMPLETO
 # --------------------------------------
 def load_and_preprocess_v3_multi():
 
@@ -63,27 +77,16 @@ def load_and_preprocess_v3_multi():
 
     df = pd.read_csv(RAW_DATA_PATH, parse_dates=["time"])
 
-    # Features base
-    base_features = [
-        "nitrogen_dioxide", "ozone",
-        "temperature_2m", "relative_humidity_2m",
-        "wind_speed_10m", "wind_direction_10m",
-        "precipitation", "surface_pressure",
-        "hour", "day_of_week", "month",
-        "is_weekend", "wind_u", "wind_v", "is_rainy"
-    ]
+    # 1) añadir columnas que faltaban (hora, weekend, UV, etc.)
+    df = add_basic_engineered_features(df)
 
-    targets = ["pm2_5", "pm10"]
-
-    df = df[["time"] + base_features + targets]
-
-    # Añadir features avanzados TCN v3
+    # 2) añadir features avanzados TCN v3
     df = add_advanced_features(df)
 
-    # Añadir horizons multi-head
+    # 3) añadir targets multi-horizon
     df = add_multi_horizon_targets(df)
 
-    # Quitar cualquier NaN generado por shifts y rolling
+    # 4) quitar NAs
     df = df.dropna().reset_index(drop=True)
 
     df.to_csv(CLEAN_DATA_PATH_V3, index=False)

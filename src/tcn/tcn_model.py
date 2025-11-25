@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from tcn.tcn_layer import TCN
+from .tcn_layer import TCN
 
 class TCNRegressor(nn.Module):
     def __init__(self, num_features, seq_length):
