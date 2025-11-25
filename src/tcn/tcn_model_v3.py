@@ -45,15 +45,14 @@ class TemporalBlock(nn.Module):
 
 class TCNMultiTowers(nn.Module):
     """
-    TCN multi-head con torres especializadas:
-    Produce 5 horizontes:
-    1h, 12h, 24h, 72h, 168h
+    TCN multi-head para 1h, 12h, 24h, 72h y 168h.
+    Optimizado para SEQ_LEN largo (336 horas).
     """
 
-    def __init__(self, num_inputs, num_channels=[64, 64, 128, 128], kernel_size=3, dropout=0.2):
+    def __init__(self, num_inputs, num_channels=[64, 128, 256, 256, 128], 
+                 kernel_size=3, dropout=0.2):
         super().__init__()
 
-        # TCN compartido
         layers = []
         for i in range(len(num_channels)):
             dilation = 2 ** i
@@ -65,7 +64,6 @@ class TCNMultiTowers(nn.Module):
 
         hidden_size = num_channels[-1]
 
-        # === TORRES ESPECIALIZADAS ===
         def build_head():
             return nn.Sequential(
                 nn.Linear(hidden_size, hidden_size // 2),
@@ -80,15 +78,13 @@ class TCNMultiTowers(nn.Module):
         self.head_168h = build_head()
 
     def forward(self, x):
-        # x: (batch, features, seq_len)
         y = self.network(x)
-        y = y[:, :, -1]  # último paso
+        y = y[:, :, -1]  # último paso temporal
 
-        out_1h = self.head_1h(y)
-        out_12h = self.head_12h(y)
-        out_24h = self.head_24h(y)
-        out_72h = self.head_72h(y)
-        out_168h = self.head_168h(y)
-
-        # concatena 5 salidas
-        return torch.cat([out_1h, out_12h, out_24h, out_72h, out_168h], dim=1)
+        return torch.cat([
+            self.head_1h(y),
+            self.head_12h(y),
+            self.head_24h(y),
+            self.head_72h(y),
+            self.head_168h(y)
+        ], dim=1)
