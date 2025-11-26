@@ -45,12 +45,14 @@ class TemporalBlock(nn.Module):
 
 class TCNMultiTowers(nn.Module):
     """
-    TCN multi-head para 1h, 12h, 24h, 72h y 168h.
-    Optimizado para SEQ_LEN largo (336 horas).
+    TCN multi-head para 1h, 12h, 24h, 72h, 168h
+    Optimizado para SEQ_LEN=168 y dataset grande (2013–2025)
     """
 
-    def __init__(self, num_inputs, num_channels=[64, 128, 256, 256, 128], 
-                 kernel_size=3, dropout=0.2):
+    def __init__(self, num_inputs,
+                 num_channels=[128, 256, 256, 512, 512],
+                 kernel_size=3,
+                 dropout=0.2):
         super().__init__()
 
         layers = []
@@ -64,6 +66,7 @@ class TCNMultiTowers(nn.Module):
 
         hidden_size = num_channels[-1]
 
+        # Multi-head specialist towers
         def build_head():
             return nn.Sequential(
                 nn.Linear(hidden_size, hidden_size // 2),
@@ -78,8 +81,9 @@ class TCNMultiTowers(nn.Module):
         self.head_168h = build_head()
 
     def forward(self, x):
-        y = self.network(x)
-        y = y[:, :, -1]  # último paso temporal
+        # x: (batch, features, seq_len)
+        y = self.network(x)          # → (batch, channels, seq_len)
+        y = y[:, :, -1]              # → último paso
 
         return torch.cat([
             self.head_1h(y),
