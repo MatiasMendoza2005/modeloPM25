@@ -22,8 +22,16 @@ LR = 3e-4
 
 HORIZON_NAMES = ["pm2_5_1h","pm2_5_12h","pm2_5_24h","pm2_5_72h","pm2_5_168h"]
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# Forzar uso exclusivo de GPU: fallar si no hay CUDA disponible
+if not torch.cuda.is_available():
+    raise RuntimeError("GPU no disponible: configura CUDA y una GPU antes de entrenar (se requiere GPU).")
+
+DEVICE = torch.device("cuda")
 print(f"Entrenando en: {DEVICE}")
+
+# Optimización y limpieza para entrenamiento en GPU
+torch.cuda.empty_cache()
+torch.backends.cudnn.benchmark = True
 
 
 def train_tcn_v3_multi():
