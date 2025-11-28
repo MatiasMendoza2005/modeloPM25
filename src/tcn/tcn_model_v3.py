@@ -46,13 +46,16 @@ class TemporalBlock(nn.Module):
 class TCNMultiTowers(nn.Module):
     """
     TCN multi-head para 1h, 12h, 24h, 72h, 168h
-    Optimizado para SEQ_LEN=168 y dataset grande (2013–2025)
+    OPTIMIZADO: Reducida complejidad para evitar overfitting
+    - Canales: 64→128→128→64 (vs anterior 128→256→256→512→512)
+    - Dropout: 0.4 (vs anterior 0.2)
+    - Capas: 4 bloques (vs anterior 5)
     """
 
     def __init__(self, num_inputs,
-                 num_channels=[128, 256, 256, 512, 512],
+                 num_channels=[64, 128, 128, 64],  # Reducido 70%
                  kernel_size=3,
-                 dropout=0.2):
+                 dropout=0.4):  # Aumentado para regularización
         super().__init__()
 
         layers = []
@@ -66,11 +69,12 @@ class TCNMultiTowers(nn.Module):
 
         hidden_size = num_channels[-1]
 
-        # Multi-head specialist towers
+        # Multi-head specialist towers (simplificados)
         def build_head():
             return nn.Sequential(
                 nn.Linear(hidden_size, hidden_size // 2),
                 nn.ReLU(),
+                nn.Dropout(dropout),  # Agregar dropout en heads
                 nn.Linear(hidden_size // 2, 1)
             )
 
