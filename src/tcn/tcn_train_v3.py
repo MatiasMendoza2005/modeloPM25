@@ -313,14 +313,22 @@ def train_tcn_v3_multi():
     model.eval()
     
     # Calcular baseline primero (con datos desnormalizados)
-    Y_test_original = scaler_Y.inverse_transform(Y_test.cpu().numpy().reshape(-1,5))
+    Y_test_original = scaler_Y.inverse_transform(Y_test.numpy())
 
     # Ahora sí: calcular baseline
     baseline_metrics = calculate_baseline_metrics(Y_test_original)      
     # Evaluar en validation
     preds_val_scaled = model(X_val.to(DEVICE)).cpu().detach().numpy()
+
+    # 🔥 CLIP entre 0 y 1 ANTES de desnormalizar
+    preds_val_scaled = np.clip(preds_val_scaled, 0, 1)
+
+    # Desescalar
     preds_val = scaler_Y.inverse_transform(preds_val_scaled.reshape(-1, 5))
     Y_val_original = scaler_Y.inverse_transform(Y_val.cpu().numpy().reshape(-1, 5))
+
+    # Verificación de shapes
+    assert preds_val.shape == Y_val_original.shape, "Shape mismatch en VALIDATION"
 
     # Validación de shapes
     assert preds_val.shape == Y_val_original.shape, "Shape mismatch VAL!"
