@@ -306,8 +306,10 @@ def train_tcn_v3_multi():
     model.eval()
     
     # Calcular baseline primero (con datos desnormalizados)
-    baseline_metrics = calculate_baseline_metrics(Y_test_original)
-    
+    Y_test_original = scaler_Y.inverse_transform(Y_test.numpy())
+
+    # Ahora sí: calcular baseline
+    baseline_metrics = calculate_baseline_metrics(Y_test_original)      
     # Evaluar en validation
     preds_val_scaled = model(X_val.to(DEVICE)).cpu().detach().numpy()
     preds_val = scaler_Y.inverse_transform(preds_val_scaled)  # CORREGIDO: Desnormalizar
