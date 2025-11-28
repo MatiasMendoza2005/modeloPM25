@@ -46,35 +46,54 @@ class TemporalBlock(nn.Module):
 class TCNMultiTowers(nn.Module):
     """
     TCN multi-head para 1h, 12h, 24h, 72h, 168h
-    OPTIMIZADO: Reducida complejidad para evitar overfitting
-    - Canales: 64→128→128→64 (vs anterior 128→256→256→512→512)
-    - Dropout: 0.4 (vs anterior 0.2)
-    - Capas: 4 bloques (vs anterior 5)
+    OPTIMIZADO v2: Mejor receptive field y capacidad balanceada
+    
+    Receptive Field Calculation:
+    - Con dilations=[1,2,4,8,16,32] y kernel=3:
+    - RF ≈ 2 * kernel * sum(dilations) = 2 * 3 * 63 = 378 pasos
+    - Cubre toda la ventana de 168 horas + margen
+    
+    - Canales: 64→128→128→128→64→32 (balance capacidad/regularización)
+    - Dropout: 0.4 (regularización fuerte)
+    - Capas: 6 bloques (suficiente para 168h)
     """
 
     def __init__(self, num_inputs,
-                 num_channels=[64, 128, 128, 64],  # Reducido 70%
+                 num_channels=[64, 128, 128, 128, 64, 32],  # MEJORADO: Más profundo
                  kernel_size=3,
-                 dropout=0.4):  # Aumentado para regularización
+                 dropout=0.4,  # Regularización fuerte
+                 use_global_pooling=False):  # NUEVO: Opción de pooling
         super().__init__()
+        
+        self.use_global_pooling = use_global_pooling
 
         layers = []
         for i in range(len(num_channels)):
-            dilation = 2 ** i
+            dilation = 2 ** i  # [1,2,4,8,16,32] para 6 capas
             in_ch = num_inputs if i == 0 else num_channels[i - 1]
             out_ch = num_channels[i]
             layers.append(TemporalBlock(in_ch, out_ch, kernel_size, dilation, dropout))
+        
+        # Receptive field total
+        self.receptive_field = sum([2 ** i * (kernel_size - 1) for i in range(len(num_channels))]) + 1
 
         self.network = nn.Sequential(*layers)
 
         hidden_size = num_channels[-1]
+        
+        # Si usamos global pooling, el tamaño de entrada cambia
+        if use_global_pooling:
+            hidden_size = hidden_size * 2  # avg + max pooling
 
-        # Multi-head specialist towers (simplificados)
+        # Multi-head specialist towers (optimizados)
         def build_head():
             return nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),  # MEJORADO: Mejor capacidad
+                nn.ReLU(),
+                nn.Dropout(dropout),
                 nn.Linear(hidden_size, hidden_size // 2),
                 nn.ReLU(),
-                nn.Dropout(dropout),  # Agregar dropout en heads
+                nn.Dropout(dropout * 0.5),  # Dropout más ligero en capa final
                 nn.Linear(hidden_size // 2, 1)
             )
 
@@ -83,11 +102,25 @@ class TCNMultiTowers(nn.Module):
         self.head_24h = build_head()
         self.head_72h = build_head()
         self.head_168h = build_head()
+        
+        print(f"✅ TCN inicializado:")
+        print(f"   - Receptive field: {self.receptive_field} pasos")
+        print(f"   - Canales: {num_channels}")
+        print(f"   - Dilations: {[2**i for i in range(len(num_channels))]}")
+        print(f"   - Global pooling: {use_global_pooling}")
 
     def forward(self, x):
         # x: (batch, features, seq_len)
         y = self.network(x)          # → (batch, channels, seq_len)
-        y = y[:, :, -1]              # → último paso
+        
+        if self.use_global_pooling:
+            # OPCIÓN 1: Global pooling (mejor para capturar patrones globales)
+            y_avg = torch.mean(y, dim=2)  # Promedio temporal
+            y_max = torch.max(y, dim=2)[0]  # Máximo temporal
+            y = torch.cat([y_avg, y_max], dim=1)  # Concatenar ambos
+        else:
+            # OPCIÓN 2: Último paso (estándar para series temporales)
+            y = y[:, :, -1]              # → último paso
 
         return torch.cat([
             self.head_1h(y),

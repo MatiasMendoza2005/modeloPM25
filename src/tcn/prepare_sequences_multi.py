@@ -1,8 +1,25 @@
 import numpy as np
 
-def create_sequences_multi(X, Y_multi, seq_len):
+def create_sequences_multi(X, Y, seq_len, horizons=[1, 12, 24, 72, 168]):
     xs, ys = [], []
-    for i in range(len(X) - seq_len):
-        xs.append(X[i:i+seq_len])
-        ys.append(Y_multi[i+seq_len])
-    return np.array(xs), np.array(ys)
+
+    max_h = max(horizons)
+
+    for i in range(len(X) - seq_len - max_h):
+
+        # ventana de entrada
+        seq_x = X[i : i + seq_len]
+
+        # vector de 5 targets
+        seq_y = []
+
+        for h in horizons:
+            seq_y.append(Y[i + seq_len + h])
+
+        xs.append(seq_x)
+        ys.append(seq_y)
+
+    xs = np.array(xs)
+    ys = np.array(ys)
+
+    return xs, ys

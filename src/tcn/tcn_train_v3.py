@@ -24,14 +24,14 @@ from src.config import CLEAN_DATA_PATH_V3
 SEQ_LEN = 168  # Reducido de 336 a 168 (7 días en lugar de 14)
 BATCH_SIZE = 32  # Reducido de 64 a 32 para mejor generalización
 EPOCHS = 100  # Aumentado pero con early stopping más agresivo
-LR = 1e-3  # Aumentado ligeramente para convergencia más rápida
-EARLY_STOP = 5  # Reducido de 12 a 5 para detener antes el overfitting
-MIN_DELTA = 0.001  # Mejora mínima requerida
+LR = 1e-4  # CORREGIDO: Reducido de 1e-3 para evitar exploding gradients
+EARLY_STOP = 8  # Aumentado a 8 para dar más oportunidad al modelo
+MIN_DELTA = 0.01  # CORREGIDO: Aumentado para detección más robusta de mejoras
 
 HORIZON_NAMES = ["pm2_5_1h","pm2_5_12h","pm2_5_24h","pm2_5_72h","pm2_5_168h"]
 
-# Pesos más balanceados para no descuidar horizontes largos
-HORIZON_WEIGHTS = torch.tensor([3.0, 2.0, 1.5, 1.0, 0.8], dtype=torch.float32)
+# CORREGIDO: Pesos uniformes para evitar colapso de torres
+HORIZON_WEIGHTS = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0], dtype=torch.float32)
 
 # ======================================================
 # GPU CHECK
@@ -125,22 +125,29 @@ def train_tcn_v3_multi():
     print(f"Features: {len(feature_cols)}")
     print(f"Targets: {len(target_cols)}")
     
-    # Verificar que targets no estén en features
+    # CRÍTICO: Verificar que targets no estén en features
     feature_set = set(feature_cols)
     target_set = set(target_cols + ['pm2_5', 'pm10'])
     leakage = feature_set.intersection(target_set)
     if leakage:
         raise ValueError(f"❌ DATA LEAKAGE DETECTADO: {leakage} están en features")
     
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X)  # Fit en todo el dataset para este paso
-    print("✅ Escalado completado")
+    # Verificar que no haya lags de pm2_5 futuros
+    future_leakage = [f for f in feature_cols if any(h in f for h in target_cols)]
+    if future_leakage:
+        print(f"⚠️  ADVERTENCIA: Features sospechosas de leakage: {future_leakage}")
+    
+    scaler_X = MinMaxScaler()
+    scaler_Y = MinMaxScaler()
+    X_scaled = scaler_X.fit_transform(X)
+    Y_scaled = scaler_Y.fit_transform(Y)  # NUEVO: Normalizar targets también
+    print("✅ Escalado completado (Features y Targets)")
 
     # --------------------------
     # Secuencias multi-horizon
     # --------------------------
     print(f"\n=== Creando secuencias (SEQ_LEN={SEQ_LEN}) ===")
-    X_seq, Y_seq = create_sequences_multi(X_scaled, Y, SEQ_LEN)
+    X_seq, Y_seq = create_sequences_multi(X_scaled, Y_scaled, SEQ_LEN)  # CORREGIDO: Usar Y_scaled
     print(f"Secuencias creadas: {len(X_seq):,}")
     print(f"Shape X: {X_seq.shape}, Shape Y: {Y_seq.shape}")
 
@@ -243,7 +250,8 @@ def train_tcn_v3_multi():
 
             scaler_amp.scale(loss).backward()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # CORREGIDO: Gradient clipping más agresivo
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)  # Reducido de 1.0 a 0.5
 
             scaler_amp.step(optimizer)
             scaler_amp.update()
@@ -297,11 +305,13 @@ def train_tcn_v3_multi():
     model.load_state_dict(torch.load("models/tcn_pm25_v3_multi_towers_best.pt"))
     model.eval()
     
-    # Calcular baseline primero
-    baseline_metrics = calculate_baseline_metrics(Y_test.numpy())
+    # Calcular baseline primero (con datos desnormalizados)
+    baseline_metrics = calculate_baseline_metrics(Y_test_original)
     
     # Evaluar en validation
-    preds_val = model(X_val.to(DEVICE)).cpu().detach().numpy()
+    preds_val_scaled = model(X_val.to(DEVICE)).cpu().detach().numpy()
+    preds_val = scaler_Y.inverse_transform(preds_val_scaled)  # CORREGIDO: Desnormalizar
+    Y_val_original = scaler_Y.inverse_transform(Y_val.numpy())  # Desnormalizar targets
     print("\n" + "="*80)
     print("  MÉTRICAS EN VALIDATION SET")
     print("="*80)
@@ -309,7 +319,7 @@ def train_tcn_v3_multi():
     print("-"*80)
     
     for i, name in enumerate(HORIZON_NAMES):
-        yt = np.asarray(Y_val[:, i], dtype="float64")
+        yt = np.asarray(Y_val_original[:, i], dtype="float64")  # CORREGIDO: Usar desnormalizado
         yp = np.asarray(preds_val[:, i], dtype="float64")
 
         mae = mean_absolute_error(yt, yp)
@@ -332,7 +342,9 @@ def train_tcn_v3_multi():
         print(f"{name:<12} | {mae:>6.3f} | {rmse:>6.3f} | {r2:>6.3f} | {mape_v:>6.3f} | {corr:>6.3f} | {skill:>7.3f} | {better} {improvement:>+5.1f}%")
     
     # Evaluar en test
-    preds_test = model(X_test.to(DEVICE)).cpu().detach().numpy()
+    preds_test_scaled = model(X_test.to(DEVICE)).cpu().detach().numpy()
+    preds_test = scaler_Y.inverse_transform(preds_test_scaled)  # CORREGIDO: Desnormalizar
+    Y_test_original = scaler_Y.inverse_transform(Y_test.numpy())  # Desnormalizar targets
     print("\n" + "="*80)
     print("  MÉTRICAS EN TEST SET (DATOS NO VISTOS)")
     print("="*80)
@@ -342,7 +354,7 @@ def train_tcn_v3_multi():
     for i, name in enumerate(HORIZON_NAMES):
 
         # --- asegurar arrays limpios ---
-        yt = np.asarray(Y_test[:, i], dtype="float64")
+        yt = np.asarray(Y_test_original[:, i], dtype="float64")  # CORREGIDO: Usar desnormalizado
         yp = np.asarray(preds_test[:, i], dtype="float64")
 
         mae = mean_absolute_error(yt, yp)
@@ -369,7 +381,8 @@ def train_tcn_v3_multi():
     # Guardado final y resumen
     # -----------------------------
     torch.save(model.state_dict(), "models/tcn_pm25_v3_multi_towers.pt")
-    dump(scaler, "models/scaler_v3_multi_towers.pkl")
+    dump(scaler_X, "models/scaler_v3_multi_towers_X.pkl")
+    dump(scaler_Y, "models/scaler_v3_multi_towers_Y.pkl")  # NUEVO: Guardar scaler de targets
     
     print("\n" + "="*80)
     print("  RESUMEN FINAL")
@@ -377,7 +390,8 @@ def train_tcn_v3_multi():
     print(f"✅ Modelos guardados en models/")
     print(f"   - tcn_pm25_v3_multi_towers_best.pt (mejor modelo, época {best_epoch})")
     print(f"   - tcn_pm25_v3_multi_towers.pt (modelo final)")
-    print(f"   - scaler_v3_multi_towers.pkl")
+    print(f"   - scaler_v3_multi_towers_X.pkl (scaler de features)")
+    print(f"   - scaler_v3_multi_towers_Y.pkl (scaler de targets)")
     print(f"\n📊 Configuración usada:")
     print(f"   SEQ_LEN: {SEQ_LEN}")
     print(f"   Parámetros: {trainable_params:,}")
