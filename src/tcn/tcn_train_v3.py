@@ -137,11 +137,18 @@ def train_tcn_v3_multi():
     if future_leakage:
         print(f"⚠️  ADVERTENCIA: Features sospechosas de leakage: {future_leakage}")
     
+    # === ESCALADO (solo una vez, ANTES DE dividir los sets) ===
     scaler_X = MinMaxScaler()
-    scaler_Y = MinMaxScaler()
     X_scaled = scaler_X.fit_transform(X)
-    Y_scaled = scaler_Y.fit_transform(Y)  # NUEVO: Normalizar targets también
+
+    scaler_Y = MinMaxScaler()
+    Y_scaled = scaler_Y.fit_transform(Y)
+
     print("✅ Escalado completado (Features y Targets)")
+
+    # Guardar scalers AHORA MISMO (antes de split)
+    dump(scaler_X, "models/scaler_v3_multi_towers_X.pkl")
+    dump(scaler_Y, "models/scaler_v3_multi_towers_Y.pkl")
 
     # --------------------------
     # Secuencias multi-horizon
@@ -306,14 +313,18 @@ def train_tcn_v3_multi():
     model.eval()
     
     # Calcular baseline primero (con datos desnormalizados)
-    Y_test_original = scaler_Y.inverse_transform(Y_test.numpy())
+    Y_test_original = scaler_Y.inverse_transform(Y_test.cpu().numpy().reshape(-1,5))
 
     # Ahora sí: calcular baseline
     baseline_metrics = calculate_baseline_metrics(Y_test_original)      
     # Evaluar en validation
     preds_val_scaled = model(X_val.to(DEVICE)).cpu().detach().numpy()
-    preds_val = scaler_Y.inverse_transform(preds_val_scaled)  # CORREGIDO: Desnormalizar
-    Y_val_original = scaler_Y.inverse_transform(Y_val.numpy())  # Desnormalizar targets
+    preds_val = scaler_Y.inverse_transform(preds_val_scaled.reshape(-1, 5))
+    Y_val_original = scaler_Y.inverse_transform(Y_val.cpu().numpy().reshape(-1, 5))
+
+    # Validación de shapes
+    assert preds_val.shape == Y_val_original.shape, "Shape mismatch VAL!"
+
     print("\n" + "="*80)
     print("  MÉTRICAS EN VALIDATION SET")
     print("="*80)
@@ -345,8 +356,11 @@ def train_tcn_v3_multi():
     
     # Evaluar en test
     preds_test_scaled = model(X_test.to(DEVICE)).cpu().detach().numpy()
-    preds_test = scaler_Y.inverse_transform(preds_test_scaled)  # CORREGIDO: Desnormalizar
-    Y_test_original = scaler_Y.inverse_transform(Y_test.numpy())  # Desnormalizar targets
+    preds_test = scaler_Y.inverse_transform(preds_test_scaled.reshape(-1, 5))
+    Y_test_original = scaler_Y.inverse_transform(Y_test.cpu().numpy().reshape(-1, 5))
+
+    assert preds_test.shape == Y_test_original.shape, "Shape mismatch TEST!"
+
     print("\n" + "="*80)
     print("  MÉTRICAS EN TEST SET (DATOS NO VISTOS)")
     print("="*80)
